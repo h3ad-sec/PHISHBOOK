@@ -1257,6 +1257,7 @@ dataset = xdr_data
 
   <script>
     var SECTIONS = ['overview','triage','headers','urls','attachments','identity','containment','escalation','queries'];
+    var currentSection = 'overview';
 
     function navigate(id) {
       SECTIONS.forEach(function(s) {
@@ -1266,11 +1267,14 @@ dataset = xdr_data
         if (link) link.classList.toggle('active', s === id);
       });
       window.scrollTo(0, 0);
+      currentSection = id;
+      if (typeof markVisited === 'function') markVisited(id);
+      if (typeof updateMobileLabel === 'function') updateMobileLabel(id);
     }
 
     function getActiveSection() {
       var hash = window.location.hash.replace('#','');
-      return SECTIONS.indexOf(hash) >= 0 ? hash : 'overview';
+      return SECTIONS.indexOf(hash) >= 0 ? hash : currentSection;
     }
 
     function openSearch(base, inputId) {
@@ -1343,6 +1347,212 @@ dataset = xdr_data
     });
 
     navigate(getActiveSection());
+
+    // ── ENTERPRISE ADDITIONS ────────────────────────────────────────
+
+    // VISIT TRACKING
+    var visited = (function() {
+      try { return JSON.parse(sessionStorage.getItem('pb_visited') || '{}'); } catch(e) { return {}; }
+    })();
+
+    function markVisited(id) {
+      visited[id] = true;
+      try { sessionStorage.setItem('pb_visited', JSON.stringify(visited)); } catch(e) {}
+      updateProgress();
+    }
+
+    function updateProgress() {
+      var count = Object.keys(visited).length;
+      var fill = document.getElementById('progressFill');
+      var label = document.getElementById('progressLabel');
+      if (fill) fill.style.width = Math.round(count / SECTIONS.length * 100) + '%';
+      if (label) label.textContent = count + ' OF ' + SECTIONS.length + ' REVIEWED';
+      SECTIONS.forEach(function(s) {
+        var item = document.querySelector('.section-item[href="#' + s + '"]');
+        if (item) item.classList.toggle('visited', !!visited[s]);
+      });
+    }
+
+    // Inject sidebar progress bar
+    (function() {
+      var sidebar = document.querySelector('.pb-sidebar');
+      if (!sidebar) return;
+      var prog = document.createElement('div');
+      prog.className = 'sidebar-progress';
+      prog.innerHTML = '<div class="sidebar-progress-bar"><div class="sidebar-progress-fill" id="progressFill"></div></div><div class="sidebar-progress-label" id="progressLabel">0 OF 9 REVIEWED</div>';
+      sidebar.appendChild(prog);
+      updateProgress();
+    })();
+
+    // Inject section fraction counter into each section header
+    (function() {
+      var sectionNames = ['OVERVIEW','INITIAL TRIAGE','HEADER ANALYSIS','URL ANALYSIS','ATTACHMENT','IDENTITY & IMPACT','CONTAINMENT','ESCALATION','QUERY TEMPLATES'];
+      SECTIONS.forEach(function(s, i) {
+        var tag = document.querySelector('#' + s + ' .section-tag');
+        if (!tag) return;
+        var num = String(i + 1).padStart(2, '0');
+        var frac = document.createElement('span');
+        frac.style.cssText = 'float:right;font-size:0.5rem;color:var(--muted-dim);opacity:0.65;letter-spacing:0.14em;';
+        frac.textContent = num + ' / ' + String(SECTIONS.length).padStart(2, '0');
+        tag.appendChild(frac);
+      });
+    })();
+
+    // TOAST SYSTEM
+    function showToast(msg, type) {
+      var wrap = document.getElementById('toastWrap');
+      if (!wrap) return;
+      var t = document.createElement('div');
+      t.className = 'toast t-' + (type || 'ok');
+      t.textContent = msg;
+      wrap.appendChild(t);
+      setTimeout(function() {
+        t.style.transition = 'opacity 0.3s';
+        t.style.opacity = '0';
+        setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 320);
+      }, 2400);
+    }
+
+    // Enhanced copyBlock with toast
+    var _copyBlock = copyBlock;
+    copyBlock = function(btn) {
+      var pre = btn.closest('.code-block').querySelector('pre');
+      if (!pre) return;
+      navigator.clipboard.writeText(pre.textContent).then(function() {
+        btn.classList.add('copied');
+        var orig = btn.textContent;
+        btn.textContent = 'COPIED';
+        setTimeout(function() { btn.classList.remove('copied'); btn.textContent = orig; }, 1800);
+        showToast('QUERY COPIED TO CLIPBOARD', 'ok');
+      }).catch(function() { showToast('COPY FAILED — use Ctrl+C', 'info'); });
+    };
+
+    // Enhanced launchH3AD with toast
+    launchH3AD = function(url, inputId) {
+      var val = inputId ? ((document.getElementById(inputId)||{}).value||'').trim() : '';
+      if (val) {
+        navigator.clipboard.writeText(val).catch(function(){});
+        showToast('IOC COPIED — PASTE IN TOOL', 'info');
+      }
+      window.open(url, '_blank');
+    };
+
+    // SHORTCUTS MODAL
+    function openShortcuts() { document.getElementById('scOverlay').classList.add('open'); }
+    function closeShortcuts() { document.getElementById('scOverlay').classList.remove('open'); }
+
+    // MOBILE NAV
+    function mobilePrev() {
+      var idx = SECTIONS.indexOf(currentSection);
+      if (idx > 0) navigate(SECTIONS[idx - 1]);
+    }
+    function mobileNext() {
+      var idx = SECTIONS.indexOf(currentSection);
+      if (idx < SECTIONS.length - 1) navigate(SECTIONS[idx + 1]);
+    }
+    function updateMobileLabel(id) {
+      var idx = SECTIONS.indexOf(id);
+      var label = document.getElementById('mobileSectionLabel');
+      if (!label || idx < 0) return;
+      var names = ['OVERVIEW','INITIAL TRIAGE','HEADER ANALYSIS','URL ANALYSIS','ATTACHMENT','IDENTITY & IMPACT','CONTAINMENT','ESCALATION','QUERY TEMPLATES'];
+      label.innerHTML = '<span>' + (idx + 1) + '</span> / ' + SECTIONS.length + ' &mdash; ' + (names[idx] || id.toUpperCase());
+    }
+
+    // KEYBOARD NAVIGATION
+    document.addEventListener('keydown', function(e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      var modalOpen = document.getElementById('scOverlay').classList.contains('open');
+      switch(e.key) {
+        case 'ArrowRight': case ']':
+          if (!modalOpen) { var i = SECTIONS.indexOf(currentSection); if (i < SECTIONS.length - 1) navigate(SECTIONS[i + 1]); }
+          break;
+        case 'ArrowLeft': case '[':
+          if (!modalOpen) { var j = SECTIONS.indexOf(currentSection); if (j > 0) navigate(SECTIONS[j - 1]); }
+          break;
+        case '?':
+          openShortcuts(); break;
+        case 'Escape':
+          closeShortcuts(); closeDrawer(); break;
+        case 'p': case 'P':
+          if (!modalOpen) window.print(); break;
+        case 't': case 'T':
+          if (!modalOpen) toggleTheme(); break;
+        default:
+          if (!modalOpen && e.key >= '1' && e.key <= '9') {
+            var n = parseInt(e.key) - 1;
+            if (n < SECTIONS.length) navigate(SECTIONS[n]);
+          }
+      }
+    });
+
+    // SYNTAX HIGHLIGHTING
+    (function() {
+      var KWS = {
+        kql: ['let','where','project','extend','summarize','join','ago','between','contains','has','in','by','on','sort','asc','desc','top','count','todynamic','tostring','strcat','datetime','now','case','iff','isnotempty','isempty','startswith','endswith','matches','regex','dataset','fields','config','timeframe','search','filter','and','or','not'],
+        spl: ['index','sourcetype','table','eval','sort','stats','search','where','by','rex','lookup','join','fields','head','tail','dedup','rename','timechart','strftime','and','or','not'],
+        xql: ['config','dataset','filter','fields','sort','asc','desc','and','or','not','contains','timeframe','network','process','auth','file']
+      };
+
+      function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+      function applyKw(text, pat) {
+        return text.replace(pat, function(m) { return '<span class="tok-kw">' + m + '</span>'; });
+      }
+
+      function highlightLine(line, kwPat) {
+        if (/^\s*(\/\/|#)/.test(line.trim())) {
+          return '<span class="tok-cmt">' + escHtml(line) + '</span>';
+        }
+        var result = '', i = 0, pending = '';
+        while (i < line.length) {
+          if (line[i] === '[') {
+            var close = line.indexOf(']', i + 1);
+            if (close > i) {
+              result += applyKw(escHtml(pending), kwPat); pending = '';
+              result += '<span class="tok-str">' + escHtml(line.slice(i, close + 1)) + '</span>';
+              i = close + 1; continue;
+            }
+          }
+          if (line[i] === '"') {
+            var closeQ = line.indexOf('"', i + 1);
+            if (closeQ > i) {
+              result += applyKw(escHtml(pending), kwPat); pending = '';
+              result += '"<span class="tok-str">' + escHtml(line.slice(i + 1, closeQ)) + '</span>"';
+              i = closeQ + 1; continue;
+            }
+          }
+          if (line[i] === '|') {
+            result += applyKw(escHtml(pending), kwPat); pending = '';
+            result += '<span class="tok-op">|</span>';
+            i++; continue;
+          }
+          pending += line[i]; i++;
+        }
+        result += applyKw(escHtml(pending), kwPat);
+        return result;
+      }
+
+      function highlightBlock(pre, lang) {
+        var kws = KWS[lang] || KWS.kql;
+        var kwPat = new RegExp('\\b(' + kws.join('|') + ')\\b', 'gi');
+        var text = pre.textContent;
+        pre.innerHTML = text.split('\n').map(function(l) { return highlightLine(l, kwPat); }).join('\n');
+      }
+
+      document.querySelectorAll('.code-block').forEach(function(block) {
+        var langEl = block.querySelector('.code-lang');
+        var pre = block.querySelector('pre');
+        if (!langEl || !pre) return;
+        var lang = langEl.textContent.trim().toLowerCase();
+        if (lang === 'text') return;
+        highlightBlock(pre, lang);
+      });
+    })();
+
+    // Initialize mobile label
+    updateMobileLabel(currentSection);
+    // Initialize visited for initial section
+    markVisited(currentSection);
   </script>
 </body>
 </html>
